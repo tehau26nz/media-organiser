@@ -257,10 +257,14 @@ partial class Program
             }
         }
 
-        // --- Fallback ---
-        // If no EXIF date is found or the file type isn't supported, use the file's creation time.
-        // --- Fallback ---
-        // If no EXIF date is found or the file type isn't supported, use the file's creation time.
-        return File.GetCreationTime(filePath);
+        // --- Fallback for non-EXIF files (like videos) or if EXIF fails ---
+        // The "Creation Time" can be misleading (e.g., when a file is copied).
+        // The "Last Write Time" is often the original creation date for videos.
+        // By taking the *earlier* of the two, we get a more reliable date.
+        var creationTime = File.GetCreationTime(filePath);
+        var lastWriteTime = File.GetLastWriteTime(filePath);
+
+        // Return the earlier of the two dates.
+        return creationTime < lastWriteTime ? creationTime : lastWriteTime;
     }
 }
