@@ -12,13 +12,21 @@ using MetadataExtractor.Formats.Exif;
 partial class Program
 {
     // --- Configuration ---
-    // A set of file extensions (case-insensitive) that the script should process.
-    // Using a HashSet for efficient lookups.
-    private static readonly HashSet<string> MediaExtensions = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+    // Define separate sets for images and videos for easier categorization.
+    private static readonly HashSet<string> ImageExtensions = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
     {
-        ".jpg", ".jpeg", ".png", ".gif", ".heic", // Images
-        ".mov", ".mp4", ".m4v", ".avi", ".mpg"     // Videos
+        ".jpg", ".jpeg", ".png", ".gif", ".heic"
     };
+
+    private static readonly HashSet<string> VideoExtensions = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+    {
+        ".mov", ".mp4", ".m4v", ".avi", ".mpg"
+    };
+
+    // A combined set of all supported media extensions for quick initial filtering.
+    // Using a HashSet for efficient lookups.
+    private static readonly HashSet<string> MediaExtensions =
+        new HashSet<string>(ImageExtensions.Concat(VideoExtensions), StringComparer.OrdinalIgnoreCase);
 
     // A set of extensions that are likely to contain EXIF metadata.
     private static readonly HashSet<string> ExifSupportedExtensions = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
@@ -57,12 +65,34 @@ partial class Program
             Console.WriteLine("--- DRY RUN MODE ENABLED: No files will be moved. ---");
         }
 
+        // --- User Prompt for Folder Structure ---
+        bool separateFolders = false;
+        while (true)
+        {
+            Console.Write("Do you want to separate photos and videos into their own folders? (Y/N): ");
+            string? response = Console.ReadLine()?.Trim().ToUpper();
+            if (response == "Y")
+            {
+                separateFolders = true;
+                Console.WriteLine("-> Photos and videos will be placed in separate 'photos' and 'videos' folders.");
+                break;
+            }
+            if (response == "N")
+            {
+                separateFolders = false;
+                Console.WriteLine("-> Photos and videos will be organized together by date.");
+                break;
+            }
+            Console.WriteLine("Invalid input. Please enter 'Y' for Yes or 'N' for No.");
+        }
+
+
         Console.WriteLine($"Starting to organize media files in: {targetDir}");
         try
         {
             // The 'root' directory is the same as the target directory.
             // This is where the new Year/Month folders will be created.
-            await ProcessDirectory(targetDir, targetDir, isDryRun);
+            await ProcessDirectory(targetDir, targetDir, isDryRun, separateFolders);
             Console.WriteLine("✅ Organization complete!");
         }
         catch (Exception ex)
@@ -77,23 +107,23 @@ partial class Program
     /// <param name="currentDir">The directory currently being processed.</param>
     /// <param name="rootDir">The top-level directory where new year/month folders will be created.</param>
     /// <param name="isDryRun">If true, no file operations will be performed.</param>
-    private static async Task ProcessDirectory(string currentDir, string rootDir, bool isDryRun)
+    /// <param name="separateFolders">If true, media will be sorted into 'photos' and 'videos' subfolders.</param>
+    private static async Task ProcessDirectory(string currentDir, string rootDir, bool isDryRun, bool separateFolders)
     {
         // Process all files in the current directory.
         foreach (string filePath in System.IO.Directory.GetFiles(currentDir))
         {
-            await ProcessFile(filePath, rootDir, isDryRun);
+            await ProcessFile(filePath, rootDir, isDryRun, separateFolders);
         }
 
         // Process all subdirectories in the current directory.
         foreach (string subdirectoryPath in System.IO.Directory.GetDirectories(currentDir))
         {
             var dirInfo = new DirectoryInfo(subdirectoryPath);
-            // Avoid getting into an infinite loop by not re-processing the folders we create.
-            // This checks if the folder name is a 4-digit number (like a year).
-            if (!int.TryParse(dirInfo.Name, out _) || dirInfo.Name.Length != 4)
+            // Avoid re-processing our own generated folders ('photos', 'videos', 'duplicates', or year folders).
+            if (dirInfo.Name != "photos" && dirInfo.Name != "videos" && dirInfo.Name != "duplicates" && (!int.TryParse(dirInfo.Name, out _) || dirInfo.Name.Length != 4))
             {
-                await ProcessDirectory(subdirectoryPath, rootDir, isDryRun);
+                await ProcessDirectory(subdirectoryPath, rootDir, isDryRun, separateFolders);
             }
         }
     }
@@ -104,7 +134,8 @@ partial class Program
     /// <param name="filePath">The full path to the file.</param>
     /// <param name="rootDir">The top-level directory for organization.</param>
     /// <param name="isDryRun">If true, no file operations will be performed.</param>
-    private static async Task ProcessFile(string filePath, string rootDir, bool isDryRun)
+    /// <param name="separateFolders">If true, media will be sorted into 'photos' and 'videos' subfolders.</param>
+    private static async Task ProcessFile(string filePath, string rootDir, bool isDryRun, bool separateFolders)
     {
         try
         {
@@ -124,9 +155,22 @@ partial class Program
                 string yearFolder = year;
                 string monthFolder = $"{year}-{month}";
 
+                // Determine the base directory based on user's choice and file type.
+                string baseDestinationDir = rootDir;
+                if (separateFolders)
+                {
+                    if (ImageExtensions.Contains(fileExtension))
+                    {
+                        baseDestinationDir = Path.Combine(rootDir, "photos");
+                    }
+                    else if (VideoExtensions.Contains(fileExtension))
+                    {
+                        baseDestinationDir = Path.Combine(rootDir, "videos");
+                    }
+                }
+
                 // Construct the full path for the destination directory.
-                // e.g., /path/to/root/2023/2023-09
-                string destinationDir = Path.Combine(rootDir, yearFolder, monthFolder);
+                string destinationDir = Path.Combine(baseDestinationDir, yearFolder, monthFolder);
 
                 // --- Advanced Duplicate Handling ---
                 var fileInfo = new FileInfo(filePath);
