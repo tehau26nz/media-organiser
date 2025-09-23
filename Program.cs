@@ -34,6 +34,11 @@ partial class Program
         ".jpg", ".jpeg", ".heic", ".tiff"
     };
 
+    // A regex to check if a filename already matches our desired "YYYY-MM-DD_HH-mm-ss" format.
+    // It also optionally matches copy counters like " (1)".
+    private static readonly Regex StandardFileNameRegex =
+        new Regex(@"^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}( \(\d+\))?$", RegexOptions.Compiled);
+
     /// <summary>
     /// The main entry point for the application.
     /// </summary>
@@ -117,8 +122,10 @@ partial class Program
             if (allFiles.Count > 0)
             {
                 await ProcessFilesWithProgress(allFiles, targetDir, isDryRun, separateFolders, renameFiles);
+                // The final completion message is now more detailed.
+                Console.WriteLine($"\r100% processed. ✅ Sorting process completed for {allFiles.Count} files!");
             }
-            Console.WriteLine("✅ Organization complete!");
+            else Console.WriteLine("✅ Organization complete!");
         }
         catch (Exception ex)
         {
@@ -182,30 +189,33 @@ partial class Program
     private static async Task ProcessFilesWithProgress(List<string> filesToProcess, string rootDir, bool isDryRun, bool separateFolders, bool renameFiles)
     {
         int totalFiles = filesToProcess.Count;
-        bool useProgressView = totalFiles > 5;
-        string[] progressAnimation = { ".  ", ".. ", "..." };
+        if (totalFiles == 0) return;
+
+        Console.WriteLine("Processing files...");
+
+        // Keep track of which percentage milestones we've already reported.
+        var reportedMilestones = new HashSet<int>();
 
         for (int i = 0; i < totalFiles; i++)
         {
             string filePath = filesToProcess[i];
-            bool shouldLog = !useProgressView || i < 5 || i >= totalFiles - 2;
+            // We no longer need detailed per-file logging for the progress view.
+            await ProcessFile(filePath, rootDir, isDryRun, separateFolders, renameFiles, shouldLog: false);
 
-            // The core processing logic is now inside ProcessFile.
-            // We pass 'shouldLog' to control its console output.
-            await ProcessFile(filePath, rootDir, isDryRun, separateFolders, renameFiles, shouldLog);
+            // Calculate current progress and the nearest quarter.
+            int currentPercentage = (int)(((i + 1.0) / totalFiles) * 100);
+            int milestone = currentPercentage / 25 * 25; // Rounds down to the nearest 25 (0, 25, 50, 75)
 
-            if (useProgressView && i >= 5 && i < totalFiles - 2)
+            // Report on 25%, 50%, and 75% marks.
+            if (milestone > 0 && milestone < 100 && !reportedMilestones.Contains(milestone))
             {
-                int animationIndex = i % progressAnimation.Length;
-                Console.Write($"\rProcessing file {i + 1} of {totalFiles}{progressAnimation[animationIndex]}");
-                await Task.Delay(50); // Small delay to make animation visible
-            }
-            else if (useProgressView && i == totalFiles - 3)
-            {
-                // Clear the progress line before showing the last files
-                Console.Write(new string(' ', Console.WindowWidth - 1) + "\r");
+                // Use \r to return to the beginning of the line to create a smooth progress update.
+                Console.Write($"\r{milestone}% processed...");
+                reportedMilestones.Add(milestone);
             }
         }
+        // Clear the line for the final 100% message in Main.
+        Console.Write(new string(' ', Console.WindowWidth - 1) + "\r");
     }
 
     /// <summary>
@@ -264,13 +274,20 @@ partial class Program
                 string normalizedFileName;
                 if (renameFiles)
                 {
-                    // Generate the new filename based on the media date.
-                    normalizedFileName = $"{creationTime:yyyy-MM-dd_HH-mm-ss}{fileExtension}";
+                    // Check if the file is already named according to our standard.
+                    string fileNameWithoutExt = Path.GetFileNameWithoutExtension(originalFileName);
+                    if (StandardFileNameRegex.IsMatch(fileNameWithoutExt))
+                    {
+                        normalizedFileName = originalFileName; // Keep the original name
+                    }
+                    else
+                    {
+                        normalizedFileName = $"{creationTime:yyyy-MM-dd_HH-mm-ss}{fileExtension}";
+                    }
                 }
                 else
                 {
-                    string baseName = Regex.Replace(Path.GetFileNameWithoutExtension(originalFileName), @"\s*[\(-]\s*\d+\s*\)?$", "").Trim();
-                    normalizedFileName = $"{baseName}{fileExtension}";
+                    normalizedFileName = originalFileName;
                 }
                 string primaryDestinationPath = Path.Combine(destinationDir, normalizedFileName);
                 string finalPath = primaryDestinationPath;
@@ -317,7 +334,7 @@ partial class Program
                 }
                 if (!isDryRun)
                 {
-                    File.Move(filePath, finalPath);
+                    await Task.Run(() => File.Move(filePath, finalPath));
                 }
             }
         }
@@ -345,9 +362,6 @@ partial class Program
                 Console.WriteLine($"[Unexpected Error] Could not process file {filePath}: {ex.Message}");
             }
         }
-        // The 'await Task.CompletedTask' is just to make the method async as good practice,
-        // even though our file operations here are synchronous.
-        await Task.CompletedTask;
     }
 
     /// <summary>
@@ -396,7 +410,9 @@ partial class Program
                     // A sanity check for dates that are clearly wrong (e.g., '0001-01-01')
                     if (dateTaken.Year > 1)
                     {
-                        Console.WriteLine($"  -> Found EXIF Date Taken: {dateTaken}");
+                        // This logging is now disabled during the main progress view,
+                        // but we keep the code here in case we want to re-enable it for debugging.
+                        // Console.WriteLine($"  -> Found EXIF Date Taken: {dateTaken}");
                         return dateTaken; // Return the EXIF date if found.
                     }
                 }
