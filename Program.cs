@@ -86,13 +86,31 @@ partial class Program
             Console.WriteLine("Invalid input. Please enter 'Y' for Yes or 'N' for No.");
         }
 
+        // --- User Prompt for Renaming Files ---
+        bool renameFiles = false;
+        while (true)
+        {
+            Console.Write("Do you want to rename files to 'YYYY-MM-DD_HH-mm-ss' format? (Y/N): ");
+            string? response = Console.ReadLine()?.Trim().ToUpper();
+            if (response == "Y")
+            {
+                renameFiles = true;
+                Console.WriteLine("-> Files will be renamed based on their 'date taken'.");
+                break;
+            }
+            if (response == "N")
+            {
+                renameFiles = false;
+                Console.WriteLine("-> Original filenames will be preserved.");
+                break;
+            }
+            Console.WriteLine("Invalid input. Please enter 'Y' for Yes or 'N' for No.");
+        }
 
         Console.WriteLine($"Starting to organize media files in: {targetDir}");
         try
         {
-            // The 'root' directory is the same as the target directory.
-            // This is where the new Year/Month folders will be created.
-            await ProcessDirectory(targetDir, targetDir, isDryRun, separateFolders);
+            await ProcessDirectory(targetDir, targetDir, isDryRun, separateFolders, renameFiles);
             Console.WriteLine("✅ Organization complete!");
         }
         catch (Exception ex)
@@ -108,22 +126,23 @@ partial class Program
     /// <param name="rootDir">The top-level directory where new year/month folders will be created.</param>
     /// <param name="isDryRun">If true, no file operations will be performed.</param>
     /// <param name="separateFolders">If true, media will be sorted into 'photos' and 'videos' subfolders.</param>
-    private static async Task ProcessDirectory(string currentDir, string rootDir, bool isDryRun, bool separateFolders)
+    /// <param name="renameFiles">If true, files will be renamed to a date-based format.</param>
+    private static async Task ProcessDirectory(string currentDir, string rootDir, bool isDryRun, bool separateFolders, bool renameFiles)
     {
         // Process all files in the current directory.
         foreach (string filePath in System.IO.Directory.GetFiles(currentDir))
         {
-            await ProcessFile(filePath, rootDir, isDryRun, separateFolders);
+            await ProcessFile(filePath, rootDir, isDryRun, separateFolders, renameFiles);
         }
 
         // Process all subdirectories in the current directory.
         foreach (string subdirectoryPath in System.IO.Directory.GetDirectories(currentDir))
         {
             var dirInfo = new DirectoryInfo(subdirectoryPath);
-            // Avoid re-processing our own generated folders ('photos', 'videos', 'duplicates', or year folders).
+            // Avoid re-processing our own generated folders ('photos', 'videos', 'duplicates', or year folders like '2023').
             if (dirInfo.Name != "photos" && dirInfo.Name != "videos" && dirInfo.Name != "duplicates" && (!int.TryParse(dirInfo.Name, out _) || dirInfo.Name.Length != 4))
             {
-                await ProcessDirectory(subdirectoryPath, rootDir, isDryRun, separateFolders);
+                await ProcessDirectory(subdirectoryPath, rootDir, isDryRun, separateFolders, renameFiles);
             }
         }
     }
@@ -135,7 +154,8 @@ partial class Program
     /// <param name="rootDir">The top-level directory for organization.</param>
     /// <param name="isDryRun">If true, no file operations will be performed.</param>
     /// <param name="separateFolders">If true, media will be sorted into 'photos' and 'videos' subfolders.</param>
-    private static async Task ProcessFile(string filePath, string rootDir, bool isDryRun, bool separateFolders)
+    /// <param name="renameFiles">If true, files will be renamed to a date-based format.</param>
+    private static async Task ProcessFile(string filePath, string rootDir, bool isDryRun, bool separateFolders, bool renameFiles)
     {
         try
         {
@@ -178,10 +198,18 @@ partial class Program
                 long originalFileSize = fileInfo.Length;
 
                 // Normalize the filename by removing common duplicate markers like "(1)" or "- 1".
-                // This gives us the "base" name to check against.
-                string baseName = Regex.Replace(Path.GetFileNameWithoutExtension(originalFileName), @"\s*[\(-]\s*\d+\s*\)?$", "").Trim();
-                string normalizedFileName = $"{baseName}{fileExtension}";
-
+                // This gives us the "base" name to check against if we are not renaming.
+                string normalizedFileName;
+                if (renameFiles)
+                {
+                    // Generate the new filename based on the media date.
+                    normalizedFileName = $"{creationTime:yyyy-MM-dd_HH-mm-ss}{fileExtension}";
+                }
+                else
+                {
+                    string baseName = Regex.Replace(Path.GetFileNameWithoutExtension(originalFileName), @"\s*[\(-]\s*\d+\s*\)?$", "").Trim();
+                    normalizedFileName = $"{baseName}{fileExtension}";
+                }
                 string primaryDestinationPath = Path.Combine(destinationDir, normalizedFileName);
                 string finalPath = primaryDestinationPath;
 
@@ -195,14 +223,15 @@ partial class Program
                     {
                         Console.WriteLine($"  -> True duplicate found for: {originalFileName} (same size as {normalizedFileName})");
                         string duplicateDir = Path.Combine(rootDir, "duplicates", monthFolder);
-                        // We use the original filename in the duplicates folder to preserve its name.
+                        // We use the original filename in the duplicates folder to preserve its original name.
                         finalPath = GetUniqueFilePath(duplicateDir, originalFileName);
                     }
                     else
                     {
                         // Not a true duplicate (different size), but a name collision.
-                        // Move the current file to the primary folder but with a unique name.
                         Console.WriteLine($"  -> Name collision for: {originalFileName} (different size). Renaming.");
+                        // If we are renaming files, the collision is likely from the same timestamp. We append a copy counter.
+                        // If not renaming, we preserve the original name and append a copy counter.
                         finalPath = GetUniqueFilePath(destinationDir, originalFileName);
                     }
                 }
@@ -244,25 +273,24 @@ partial class Program
 
     /// <summary>
     /// Generates a unique file path in a target directory by appending a counter if a file with the same name exists.
-    /// e.g., "image.jpg" -> "image_copy_1.jpg"
+    /// e.g., "image.jpg" -> "image (1).jpg"
+    /// e.g., "2023-10-27_15-30-00.jpg" -> "2023-10-27_15-30-00 (1).jpg"
     /// </summary>
     /// <param name="targetDir">The directory where the file should be placed.</param>
     /// <param name="fileName">The original name of the file.</param>
     /// <returns>A unique file path.</returns>
     private static string GetUniqueFilePath(string targetDir, string fileName)
     {
-        string newFilePath = Path.Combine(targetDir, fileName);
-        if (File.Exists(newFilePath))
+        string destinationPath = Path.Combine(targetDir, fileName);
+        int copyCount = 1;
+        string fileNameWithoutExt = Path.GetFileNameWithoutExtension(fileName);
+        string fileExt = Path.GetExtension(fileName);
+
+        while (File.Exists(destinationPath))
         {
-            string fileNameWithoutExt = Path.GetFileNameWithoutExtension(fileName);
-            string fileExt = Path.GetExtension(fileName);
-            int copyCount = 1;
-            do
-            {
-                newFilePath = Path.Combine(targetDir, $"{fileNameWithoutExt}_copy_{copyCount++}{fileExt}");
-            } while (File.Exists(newFilePath));
+            destinationPath = Path.Combine(targetDir, $"{fileNameWithoutExt} ({copyCount++}){fileExt}");
         }
-        return newFilePath;
+        return destinationPath;
     }
 
     /// <summary>

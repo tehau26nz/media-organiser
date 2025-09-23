@@ -5,6 +5,8 @@ A simple yet powerful C# console application to organize your photos and videos 
 ## Features
 
 - **Date-Based Organization:** Moves files into `YYYY/YYYY-MM` folders.
+- **Flexible Folder Structure:** Interactively choose to keep photos and videos together or separate them into `photos` and `videos` subfolders.
+- **Optional File Renaming:** Choose to rename your files to a standardized `YYYY-MM-DD_HH-mm-ss` format for clean, sortable filenames, or keep the original names.
 - **Smart Date Detection:** Prioritizes EXIF "Date Taken" metadata for accurate sorting. Falls back to file creation date for videos and other files without EXIF data.
 - **Advanced Duplicate Handling:**
   - Detects true duplicates (same name and size) and moves them to a separate `duplicates` folder.
@@ -19,31 +21,36 @@ A simple yet powerful C# console application to organize your photos and videos 
 
 ## How to Use in Visual Studio Code
 
-1.  **Clone the Repository:**
-    Clone this project from GitHub to your local machine.
+1. **Clone the Repository:**
+   Clone this project from GitHub to your local machine.
 
-2.  **Open in VS Code:**
-    Open the `MediaOrganizer` folder in Visual Studio Code.
+2. **Open in VS Code:**
+   Open the `MediaOrganizer` folder in Visual Studio Code.
 
-3.  **Open the Terminal:**
-    Use the shortcut `Ctrl+` \` (Control + backtick) or go to `Terminal > New Terminal` in the menu.
+3. **Open the Terminal:**
+   Use the shortcut `Ctrl+` \` (Control + backtick) or go to `Terminal > New Terminal` in the menu.
 
-4.  **Run the Program:**
-    The program requires you to provide the path to the directory containing your media files.
+4. **Run the Program:**
+   The program requires you to provide the path to the directory containing your media files.
 
-    To run the organizer, use the `dotnet run` command followed by the path to your media folder.
+   To run the organizer, use the `dotnet run` command followed by the path to your media folder.
 
-    ```bash
-    # Example for Windows
-    dotnet run "C:\Users\YourUser\Pictures\Unsorted"
+   ```bash
+   # Example for Windows
+   dotnet run "C:\Users\YourUser\Pictures\Unsorted"
 
-    # Example for macOS/Linux
-    dotnet run "/home/youruser/pictures/unsorted"
-    ```
+   # Example for macOS/Linux
+   dotnet run "/home/youruser/pictures/unsorted"
+   ```
 
-5.  **Using Dry-Run Mode (Recommended for first use):**
-    To see what the script _would_ do without actually moving any files, add the `--dry-run` flag. This is a safe way to preview the changes.
+   You will then be prompted with a few questions to customize the organization process:
 
-    ```bash
-    dotnet run "/path/to/your/photos" --dry-run
-    ```
+   - **Separate photos and videos? (Y/N):** Choose if you want media sorted into `photos` and `videos` subdirectories.
+   - **Rename files? (Y/N):** Choose if you want files renamed to the `YYYY-MM-DD_HH-mm-ss` format.
+
+5. **Using Dry-Run Mode (Recommended for first use):**
+   To see what the script _would_ do without actually moving any files, add the `--dry-run` flag. This is a safe way to preview the changes.
+
+   ```bash
+   dotnet run "/path/to/your/photos" --dry-run
+   ```
