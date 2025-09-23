@@ -107,10 +107,17 @@ partial class Program
             Console.WriteLine("Invalid input. Please enter 'Y' for Yes or 'N' for No.");
         }
 
-        Console.WriteLine($"Starting to organize media files in: {targetDir}");
+        Console.WriteLine($"\nScanning for media files in: {targetDir}...");
         try
         {
-            await ProcessDirectory(targetDir, targetDir, isDryRun, separateFolders, renameFiles);
+            // First, collect all files to get a total count for progress reporting.
+            var allFiles = GetAllMediaFiles(targetDir);
+            Console.WriteLine($"Found {allFiles.Count} media files to process.");
+
+            if (allFiles.Count > 0)
+            {
+                await ProcessFilesWithProgress(allFiles, targetDir, isDryRun, separateFolders, renameFiles);
+            }
             Console.WriteLine("✅ Organization complete!");
         }
         catch (Exception ex)
@@ -120,29 +127,83 @@ partial class Program
     }
 
     /// <summary>
-    /// Recursively processes a directory, moving files and stepping into subdirectories.
+    /// Recursively finds all media files in a directory, skipping generated folders.
     /// </summary>
-    /// <param name="currentDir">The directory currently being processed.</param>
+    /// <param name="rootDir">The top-level directory to scan.</param>
+    /// <returns>A list of full file paths for all supported media files.</returns>
+    private static List<string> GetAllMediaFiles(string rootDir)
+    {
+        var mediaFiles = new List<string>();
+        var directoriesToScan = new Stack<string>();
+        directoriesToScan.Push(rootDir);
+
+        while (directoriesToScan.Count > 0)
+        {
+            string currentDir = directoriesToScan.Pop();
+
+            // Add files from the current directory.
+            try
+            {
+                foreach (string filePath in System.IO.Directory.GetFiles(currentDir))
+                {
+                    if (MediaExtensions.Contains(Path.GetExtension(filePath)))
+                    {
+                        mediaFiles.Add(filePath);
+                    }
+                }
+
+                // Add subdirectories to the stack for scanning.
+                foreach (string subdirectoryPath in System.IO.Directory.GetDirectories(currentDir))
+                {
+                    var dirInfo = new DirectoryInfo(subdirectoryPath);
+                    // Avoid re-processing our own generated folders.
+                    if (dirInfo.Name != "photos" && dirInfo.Name != "videos" && dirInfo.Name != "duplicates" && (!int.TryParse(dirInfo.Name, out _) || dirInfo.Name.Length != 4))
+                    {
+                        directoriesToScan.Push(subdirectoryPath);
+                    }
+                }
+            }
+            catch (UnauthorizedAccessException)
+            {
+                Console.WriteLine($"[Permission Error] Could not access directory {currentDir}. Skipping.");
+            }
+        }
+        return mediaFiles;
+    }
+
+    /// <summary>
+    /// Processes a list of files with intelligent progress reporting.
+    /// </summary>
+    /// <param name="filesToProcess">The list of file paths to process.</param>
     /// <param name="rootDir">The top-level directory where new year/month folders will be created.</param>
     /// <param name="isDryRun">If true, no file operations will be performed.</param>
     /// <param name="separateFolders">If true, media will be sorted into 'photos' and 'videos' subfolders.</param>
     /// <param name="renameFiles">If true, files will be renamed to a date-based format.</param>
-    private static async Task ProcessDirectory(string currentDir, string rootDir, bool isDryRun, bool separateFolders, bool renameFiles)
+    private static async Task ProcessFilesWithProgress(List<string> filesToProcess, string rootDir, bool isDryRun, bool separateFolders, bool renameFiles)
     {
-        // Process all files in the current directory.
-        foreach (string filePath in System.IO.Directory.GetFiles(currentDir))
-        {
-            await ProcessFile(filePath, rootDir, isDryRun, separateFolders, renameFiles);
-        }
+        int totalFiles = filesToProcess.Count;
+        bool useProgressView = totalFiles > 5;
+        string[] progressAnimation = { ".  ", ".. ", "..." };
 
-        // Process all subdirectories in the current directory.
-        foreach (string subdirectoryPath in System.IO.Directory.GetDirectories(currentDir))
+        for (int i = 0; i < totalFiles; i++)
         {
-            var dirInfo = new DirectoryInfo(subdirectoryPath);
-            // Avoid re-processing our own generated folders ('photos', 'videos', 'duplicates', or year folders like '2023').
-            if (dirInfo.Name != "photos" && dirInfo.Name != "videos" && dirInfo.Name != "duplicates" && (!int.TryParse(dirInfo.Name, out _) || dirInfo.Name.Length != 4))
+            string filePath = filesToProcess[i];
+            bool shouldLog = !useProgressView || i < 5 || i >= totalFiles - 2;
+
+            // The core processing logic is now inside ProcessFile.
+            // We pass 'shouldLog' to control its console output.
+            await ProcessFile(filePath, rootDir, isDryRun, separateFolders, renameFiles, shouldLog);
+
+            if (useProgressView && i >= 5 && i < totalFiles - 2)
             {
-                await ProcessDirectory(subdirectoryPath, rootDir, isDryRun, separateFolders, renameFiles);
+                int animationIndex = i % progressAnimation.Length;
+                Console.Write($"\rProcessing file {i + 1} of {totalFiles}{progressAnimation[animationIndex]}");
+                await Task.Delay(50); // Small delay to make animation visible
+            }
+            else if (useProgressView && i == totalFiles - 3)
+            {
+                // Clear the progress line before showing the last files
+                Console.Write(new string(' ', Console.WindowWidth - 1) + "\r");
             }
         }
     }
@@ -155,7 +216,8 @@ partial class Program
     /// <param name="isDryRun">If true, no file operations will be performed.</param>
     /// <param name="separateFolders">If true, media will be sorted into 'photos' and 'videos' subfolders.</param>
     /// <param name="renameFiles">If true, files will be renamed to a date-based format.</param>
-    private static async Task ProcessFile(string filePath, string rootDir, bool isDryRun, bool separateFolders, bool renameFiles)
+    /// <param name="shouldLog">If true, console output will be generated for this file.</param>
+    private static async Task ProcessFile(string filePath, string rootDir, bool isDryRun, bool separateFolders, bool renameFiles, bool shouldLog)
     {
         try
         {
@@ -221,15 +283,20 @@ partial class Program
                     // VIGOROUS CHECK: If file sizes match, it's a true duplicate.
                     if (originalFileSize == destFileInfo.Length)
                     {
-                        Console.WriteLine($"  -> True duplicate found for: {originalFileName} (same size as {normalizedFileName})");
+                        if (shouldLog)
+                        {
+                            Console.WriteLine($"  -> True duplicate found for: {originalFileName} (same size as {normalizedFileName})");
+                        }
                         string duplicateDir = Path.Combine(rootDir, "duplicates", monthFolder);
                         // We use the original filename in the duplicates folder to preserve its original name.
                         finalPath = GetUniqueFilePath(duplicateDir, originalFileName);
                     }
                     else
                     {
-                        // Not a true duplicate (different size), but a name collision.
-                        Console.WriteLine($"  -> Name collision for: {originalFileName} (different size). Renaming.");
+                        if (shouldLog)
+                        {
+                            Console.WriteLine($"  -> Name collision for: {originalFileName} (different size). Renaming.");
+                        }
                         // If we are renaming files, the collision is likely from the same timestamp. We append a copy counter.
                         // If not renaming, we preserve the original name and append a copy counter.
                         finalPath = GetUniqueFilePath(destinationDir, originalFileName);
@@ -244,7 +311,10 @@ partial class Program
                 }
 
                 // Move the file if not in dry run mode.
-                Console.WriteLine(isDryRun ? $"[Dry Run] Would move {filePath} -> {finalPath}" : $"Moving {filePath} -> {finalPath}");
+                if (shouldLog)
+                {
+                    Console.WriteLine(isDryRun ? $"[Dry Run] Would move {filePath} -> {finalPath}" : $"Moving {filePath} -> {finalPath}");
+                }
                 if (!isDryRun)
                 {
                     File.Move(filePath, finalPath);
@@ -255,16 +325,25 @@ partial class Program
         catch (IOException ex)
         {
             // This error often happens if the file is open in another program.
-            Console.WriteLine($"[I/O Error] Could not process file {filePath}. It may be in use. Details: {ex.Message}");
+            if (shouldLog)
+            {
+                Console.WriteLine($"[I/O Error] Could not process file {filePath}. It may be in use. Details: {ex.Message}");
+            }
         }
         catch (UnauthorizedAccessException)
         {
             // This happens if the script doesn't have permission to read/move the file.
-            Console.WriteLine($"[Permission Error] Could not access file {filePath}. Check permissions.");
+            if (shouldLog)
+            {
+                Console.WriteLine($"[Permission Error] Could not access file {filePath}. Check permissions.");
+            }
         }
         catch (Exception ex) // A general catch-all for any other unexpected errors.
         {
-            Console.WriteLine($"[Unexpected Error] Could not process file {filePath}: {ex.Message}");
+            if (shouldLog)
+            {
+                Console.WriteLine($"[Unexpected Error] Could not process file {filePath}: {ex.Message}");
+            }
         }
         // The 'await Task.CompletedTask' is just to make the method async as good practice,
         // even though our file operations here are synchronous.
