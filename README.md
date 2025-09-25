@@ -4,6 +4,7 @@ A simple yet powerful C# console application to organize your photos and videos 
 
 ## Features
 
+- **Directory Flattening:** Optionally move all files from subdirectories into the main folder before organizing.
 - **Date-Based Organization:** Moves files into `YYYY/YYYY-MM` folders.
 - **Flexible Folder Structure:** Interactively choose to keep photos and videos together or separate them into `photos` and `videos` subfolders.
 - **Optional File Renaming:** Choose to rename your files to a standardized `YYYY-MM-DD_HH-mm-ss` format for clean, sortable filenames, or keep the original names.
@@ -11,7 +12,7 @@ A simple yet powerful C# console application to organize your photos and videos 
 - **Advanced Duplicate Handling:**
   - Detects true duplicates (same name and size) and moves them to a separate `duplicates` folder.
   - Resolves name collisions for non-duplicate files by renaming them.
-- **Broad File Support:** Works with common image (`.jpg`, `.jpeg`, `.png`, `.gif`, `.heic`) and video (`.mov`, `.mp4`, `.m4v`, `.avi`, `.mpg`) formats.
+- **Broad File Support:** Works with common image (`.jpg`, `.jpeg`, `.png`, `.gif`, `.heic`, `.arw`, `.cr3`) and video (`.mov`, `.mp4`, `.m4v`, `.avi`, `.mpg`) formats.
 - **Safe Dry-Run Mode:** Use the `--dry-run` flag to see what changes will be made without moving any files.
 - **Recursive Scanning:** Processes all files in the target directory and its subdirectories.
 
@@ -45,6 +46,9 @@ A simple yet powerful C# console application to organize your photos and videos 
 
    You will then be prompted with a few questions to customize the organization process:
 
+   - **Initial Choice (if subfolders are found):**
+     - **1. Consolidate all media files:** Moves all files from subfolders into the main directory, then deletes the now-empty subfolders.
+     - **2. Organize media files directly:** Scans subfolders for media but does not flatten the directory structure.
    - **Separate photos and videos? (Y/N):** Choose if you want media sorted into `photos` and `videos` subdirectories.
    - **Rename files? (Y/N):** Choose if you want files renamed to the `YYYY-MM-DD_HH-mm-ss` format.
 

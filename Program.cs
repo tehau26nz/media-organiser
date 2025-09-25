@@ -15,7 +15,7 @@ partial class Program
     // Define separate sets for images and videos for easier categorization.
     private static readonly HashSet<string> ImageExtensions = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
     {
-        ".jpg", ".jpeg", ".png", ".gif", ".heic"
+        ".jpg", ".jpeg", ".png", ".gif", ".heic", ".arw", ".cr3"
     };
 
     private static readonly HashSet<string> VideoExtensions = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
@@ -31,7 +31,7 @@ partial class Program
     // A set of extensions that are likely to contain EXIF metadata.
     private static readonly HashSet<string> ExifSupportedExtensions = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
     {
-        ".jpg", ".jpeg", ".heic", ".tiff"
+        ".jpg", ".jpeg", ".heic", ".tiff", ".arw", ".cr3"
     };
 
     // A regex to check if a filename already matches our desired "YYYY-MM-DD_HH-mm-ss" format.
@@ -70,12 +70,53 @@ partial class Program
             Console.WriteLine("--- DRY RUN MODE ENABLED: No files will be moved. ---");
         }
 
+        // --- Initial User Choice: Consolidate or Organize Directly ---
+        // Check if there are any subdirectories in the target path (excluding our own generated ones).
+        var initialSubdirectories = System.IO.Directory.GetDirectories(targetDir, "*", SearchOption.TopDirectoryOnly)
+            .Where(d => !IsGeneratedFolder(Path.GetFileName(d))) // Exclude our own generated folders
+            .ToArray();
+
+        if (initialSubdirectories.Length > 0)
+        {
+            Console.WriteLine("\nSubfolders detected in the target directory.");
+            while (true)
+            {
+                Console.WriteLine("Please choose an option:");
+                Console.WriteLine("  1. Consolidate all media files (move from subfolders to root, then delete empty subfolders).");
+                Console.WriteLine("  2. Organize media files directly (scan subfolders but do not flatten or delete them).");
+                Console.Write("Enter your choice (1 or 2): ");
+                string? choice = ReadUserInputWithExitCheck()?.Trim();
+
+                if (choice == "1")
+                {
+                    Console.WriteLine("-> Consolidating directory structure...");
+                    await FlattenDirectory(targetDir, isDryRun);
+                    Console.WriteLine("-> Directory flattening complete.");
+                    Console.WriteLine("-> Deleting empty subfolders...");
+                    await DeleteEmptySubdirectories(targetDir, isDryRun);
+                    Console.WriteLine("-> Empty subfolder deletion complete.");
+                    Console.WriteLine("\n✅ Consolidation complete. Please run the program again to organize the files.");
+                    return; // Exit the program after consolidation.
+                }
+                else if (choice == "2")
+                {
+                    Console.WriteLine("-> Proceeding with direct organization. Subfolders will be scanned.");
+                    break;
+                }
+                Console.WriteLine("Invalid input. Please enter '1', '2', or 'e' to exit.");
+            }
+        }
+        else
+        {
+            Console.WriteLine("No subfolders detected. Proceeding with organization.");
+        }
+
         // --- User Prompt for Folder Structure ---
         bool separateFolders = false;
         while (true)
         {
             Console.Write("Do you want to separate photos and videos into their own folders? (Y/N): ");
-            string? response = Console.ReadLine()?.Trim().ToUpper();
+            string? response = ReadUserInputWithExitCheck()?.Trim().ToUpper();
             if (response == "Y")
             {
                 separateFolders = true;
@@ -88,7 +129,7 @@ partial class Program
                 Console.WriteLine("-> Photos and videos will be organized together by date.");
                 break;
             }
-            Console.WriteLine("Invalid input. Please enter 'Y' for Yes or 'N' for No.");
+            Console.WriteLine("Invalid input. Please enter 'Y', 'N', or 'e' to exit.");
         }
 
         // --- User Prompt for Renaming Files ---
@@ -96,7 +137,7 @@ partial class Program
         while (true)
         {
             Console.Write("Do you want to rename files to 'YYYY-MM-DD_HH-mm-ss' format? (Y/N): ");
-            string? response = Console.ReadLine()?.Trim().ToUpper();
+            string? response = ReadUserInputWithExitCheck()?.Trim().ToUpper();
             if (response == "Y")
             {
                 renameFiles = true;
@@ -109,7 +150,7 @@ partial class Program
                 Console.WriteLine("-> Original filenames will be preserved.");
                 break;
             }
-            Console.WriteLine("Invalid input. Please enter 'Y' for Yes or 'N' for No.");
+            Console.WriteLine("Invalid input. Please enter 'Y', 'N', or 'e' to exit.");
         }
 
         Console.WriteLine($"\nScanning for media files in: {targetDir}...");
@@ -164,7 +205,7 @@ partial class Program
                 {
                     var dirInfo = new DirectoryInfo(subdirectoryPath);
                     // Avoid re-processing our own generated folders.
-                    if (dirInfo.Name != "photos" && dirInfo.Name != "videos" && dirInfo.Name != "duplicates" && (!int.TryParse(dirInfo.Name, out _) || dirInfo.Name.Length != 4))
+                    if (!IsGeneratedFolder(dirInfo.Name) && (!int.TryParse(dirInfo.Name, out _) || dirInfo.Name.Length != 4))
                     {
                         directoriesToScan.Push(subdirectoryPath);
                     }
@@ -178,6 +219,106 @@ partial class Program
         return mediaFiles;
     }
 
+    /// <summary>
+    /// Moves all files from all subdirectories into the root directory.
+    /// </summary>
+    /// <param name="rootDir">The root directory to move files into.</param>
+    /// <param name="isDryRun">If true, no file operations will be performed.</param>
+    private static async Task FlattenDirectory(string rootDir, bool isDryRun)
+    {
+        // Get all files from all subdirectories, excluding our generated ones.
+        var filesToMove = System.IO.Directory.GetFiles(rootDir, "*.*", SearchOption.AllDirectories)
+            .Where(f =>
+            {
+                var parentDir = Path.GetDirectoryName(f);
+                // Only consider files that are NOT in the root directory itself.
+                return parentDir != null && !parentDir.Equals(rootDir, StringComparison.OrdinalIgnoreCase) && !IsGeneratedFolder(new DirectoryInfo(parentDir).Name);
+            })
+            .ToList();
+
+        if (filesToMove.Count == 0)
+        {
+            Console.WriteLine("  -> No files found in subdirectories to move.");
+            return;
+        }
+
+        Console.WriteLine($"Found {filesToMove.Count} files in subdirectories to flatten.");
+
+        foreach (var filePath in filesToMove)
+        {
+            string fileName = Path.GetFileName(filePath);
+            string destinationPath = Path.Combine(rootDir, fileName);
+
+            // If a file with the same name exists, find a unique name.
+            if (File.Exists(destinationPath))
+            {
+                // We can reuse our existing unique name generator.
+                destinationPath = GetUniqueFilePath(rootDir, fileName);
+            }
+
+            Console.WriteLine(isDryRun
+                ? $"[Dry Run] Would move {filePath} -> {destinationPath}"
+                : $"Moving {filePath} -> {destinationPath}");
+
+            if (!isDryRun)
+            {
+                await Task.Run(() => File.Move(filePath, destinationPath));
+            }
+        }
+        // Note: This does not delete the now-empty subdirectories.
+    }
+
+    /// <summary>
+    /// Deletes all empty subdirectories within the root directory, excluding generated folders.
+    /// </summary>
+    /// <param name="rootDir">The root directory to clean up.</param>
+    /// <param name="isDryRun">If true, no directory operations will be performed.</param>
+    private static async Task DeleteEmptySubdirectories(string rootDir, bool isDryRun)
+    {
+        // Get all subdirectories, ordered by path length descending to delete deepest first.
+        // This ensures that when a child folder is deleted, its parent might become empty and also be deleted.
+        var subdirectories = System.IO.Directory.GetDirectories(rootDir, "*", SearchOption.AllDirectories)
+            .Where(d => !IsGeneratedFolder(Path.GetFileName(d))) // Exclude our own generated folders
+            .OrderByDescending(d => d.Length) // Process deepest first
+            .ToList();
+
+        if (subdirectories.Count == 0)
+        {
+            Console.WriteLine("  -> No subdirectories found to check for emptiness.");
+            return;
+        }
+
+        int deletedCount = 0;
+        foreach (var dirPath in subdirectories)
+        {
+            try
+            {
+                // Check if the directory is truly empty (no files or subdirectories).
+                // Use EnumerateFileSystemEntries for efficiency.
+                if (!System.IO.Directory.EnumerateFileSystemEntries(dirPath).Any())
+                {
+                    Console.WriteLine(isDryRun
+                        ? $"[Dry Run] Would delete empty directory: {dirPath}"
+                        : $"Deleting empty directory: {dirPath}");
+
+                    if (!isDryRun)
+                    {
+                        await Task.Run(() => System.IO.Directory.Delete(dirPath, false)); // 'false' means not recursive, as we're only deleting empty ones.
+                        deletedCount++;
+                    }
+                }
+            }
+            catch (UnauthorizedAccessException)
+            {
+                Console.WriteLine($"  -> [Permission Error] Could not delete directory {dirPath}. Check permissions.");
+            }
+            catch (IOException ex)
+            {
+                Console.WriteLine($"  -> [I/O Error] Could not delete directory {dirPath}. Reason: {ex.Message}");
+            }
+        }
+        Console.WriteLine($"  -> Successfully deleted {deletedCount} empty subdirectories.");
+    }
     /// <summary>
     /// Processes a list of files with intelligent progress reporting.
     /// </summary>
@@ -316,7 +457,7 @@ partial class Program
                         }
                         // If we are renaming files, the collision is likely from the same timestamp. We append a copy counter.
                         // If not renaming, we preserve the original name and append a copy counter.
-                        finalPath = GetUniqueFilePath(destinationDir, originalFileName);
+                        finalPath = GetUniqueFilePath(destinationDir, normalizedFileName);
                     }
                 }
 
@@ -431,7 +572,34 @@ partial class Program
         var creationTime = File.GetCreationTime(filePath);
         var lastWriteTime = File.GetLastWriteTime(filePath);
 
-        // Return the earlier of the two dates.
+        // Return the earlier of the two dates. This is a more reliable fallback.
         return creationTime < lastWriteTime ? creationTime : lastWriteTime;
+    }
+
+    /// <summary>
+    /// Checks if a directory name is one of the folders generated by this application.
+    /// </summary>
+    /// <param name="dirName">The name of the directory.</param>
+    /// <returns>True if it's a generated folder name.</returns>
+    private static bool IsGeneratedFolder(string dirName)
+    {
+        return dirName.Equals("photos", StringComparison.OrdinalIgnoreCase) ||
+               dirName.Equals("videos", StringComparison.OrdinalIgnoreCase) ||
+               dirName.Equals("duplicates", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Reads user input from the console and handles a global exit command.
+    /// </summary>
+    /// <returns>The user's input, or null if input is null.</returns>
+    private static string? ReadUserInputWithExitCheck()
+    {
+        string? input = Console.ReadLine();
+        if (input != null && (input.Trim().Equals("e", StringComparison.OrdinalIgnoreCase) || input.Trim().Equals("exit", StringComparison.OrdinalIgnoreCase)))
+        {
+            Console.WriteLine("\n👋 Exiting program as requested.");
+            Environment.Exit(0); // Gracefully terminate the application.
+        }
+        return input;
     }
 }
