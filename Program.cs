@@ -244,28 +244,38 @@ partial class Program
 
         Console.WriteLine($"Found {filesToMove.Count} files in subdirectories to flatten.");
 
-        foreach (var filePath in filesToMove)
+        int totalFiles = filesToMove.Count;
+        var reportedMilestones = new HashSet<int>();
+
+        for (int i = 0; i < totalFiles; i++)
         {
+            string filePath = filesToMove[i];
             string fileName = Path.GetFileName(filePath);
             string destinationPath = Path.Combine(rootDir, fileName);
 
             // If a file with the same name exists, find a unique name.
             if (File.Exists(destinationPath))
             {
-                // We can reuse our existing unique name generator.
                 destinationPath = GetUniqueFilePath(rootDir, fileName);
             }
-
-            Console.WriteLine(isDryRun
-                ? $"[Dry Run] Would move {filePath} -> {destinationPath}"
-                : $"Moving {filePath} -> {destinationPath}");
 
             if (!isDryRun)
             {
                 await Task.Run(() => File.Move(filePath, destinationPath));
             }
+
+            // Progress reporting
+            int currentPercentage = (int)(((i + 1.0) / totalFiles) * 100);
+            int milestone = currentPercentage / 25 * 25;
+
+            if (milestone > 0 && milestone < 100 && !reportedMilestones.Contains(milestone))
+            {
+                Console.Write($"\r{milestone}% flattened...");
+                reportedMilestones.Add(milestone);
+            }
         }
-        // Note: This does not delete the now-empty subdirectories.
+        // Clear the line for the next message
+        Console.Write(new string(' ', Console.WindowWidth - 1) + "\r");
     }
 
     /// <summary>
@@ -289,28 +299,37 @@ partial class Program
         }
 
         int deletedCount = 0;
-        foreach (var dirPath in subdirectories)
+        int totalDirs = subdirectories.Count;
+        var reportedMilestones = new HashSet<int>();
+
+        for (int i = 0; i < totalDirs; i++)
         {
+            string dirPath = subdirectories[i];
             try
             {
-                // Check if the directory is truly empty (no files or subdirectories).
-                // Use EnumerateFileSystemEntries for efficiency.
                 if (!System.IO.Directory.EnumerateFileSystemEntries(dirPath).Any())
                 {
-                    Console.WriteLine(isDryRun
-                        ? $"[Dry Run] Would delete empty directory: {dirPath}"
-                        : $"Deleting empty directory: {dirPath}");
-
                     if (!isDryRun)
                     {
-                        await Task.Run(() => System.IO.Directory.Delete(dirPath, false)); // 'false' means not recursive, as we're only deleting empty ones.
-                        deletedCount++;
+                        await Task.Run(() => System.IO.Directory.Delete(dirPath, false));
                     }
+                    deletedCount++;
+                }
+
+                // Progress reporting
+                int currentPercentage = (int)(((i + 1.0) / totalDirs) * 100);
+                int milestone = currentPercentage / 25 * 25;
+
+                if (milestone > 0 && milestone < 100 && !reportedMilestones.Contains(milestone))
+                {
+                    Console.Write($"\r{milestone}% checked...");
+                    reportedMilestones.Add(milestone);
                 }
             }
             catch (UnauthorizedAccessException)
             {
-                Console.WriteLine($"  -> [Permission Error] Could not delete directory {dirPath}. Check permissions.");
+                // We can choose to log this if needed, but for a cleaner UI, we'll skip it.
+                // Console.WriteLine($"\n  -> [Permission Error] Could not delete directory {dirPath}. Check permissions.");
             }
             catch (IOException ex)
             {
@@ -318,7 +337,10 @@ partial class Program
             }
         }
         Console.WriteLine($"  -> Successfully deleted {deletedCount} empty subdirectories.");
+        // Clear the line for the next message
+        Console.Write(new string(' ', Console.WindowWidth - 1) + "\r");
     }
+
     /// <summary>
     /// Processes a list of files with intelligent progress reporting.
     /// </summary>
